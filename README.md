@@ -52,6 +52,8 @@ total       = subtotal + IVA
 
 ## Funcionalidades
 
+- Entrada de viatura num só ecrã: basta a matrícula — se o carro já cá esteve, marca/modelo, dono e
+  histórico aparecem automaticamente; caso contrário pede-se marca, modelo e dono
 - Registar veículo e dono a partir do telemóvel, com atualização de km
 - Ficha do veículo com histórico contínuo: todas as visitas (data, km, avaria, trabalho, peças,
   custo), nº de visitas, horas acumuladas e total já faturado; abrir nova obra a partir da ficha
@@ -69,6 +71,8 @@ total       = subtotal + IVA
 | GET/POST | `/api/clientes` | listar/criar clientes |
 | GET/POST | `/api/veiculos` | listar/criar veículos (`?q=` pesquisa) |
 | GET/PATCH | `/api/veiculos/{id}` | ficha com histórico e resumo / atualizar km e dados |
+| GET | `/api/veiculos/por-matricula/{matricula}` | reconhecer viatura (ignora espaços e traços) |
+| POST | `/api/entrada` | receção rápida: cria/atualiza viatura e dono e abre a obra |
 | GET/POST | `/api/pecas` | catálogo de peças |
 | GET/POST | `/api/ordens` | listar (`?estado=`, `?q=`) / criar obras |
 | GET/PATCH | `/api/ordens/{id}` | detalhe com totais / atualizar |

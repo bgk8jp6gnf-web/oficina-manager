@@ -49,6 +49,19 @@ class OrdemIn(BaseModel):
     iva: float = 23.0
 
 
+class EntradaRapida(BaseModel):
+    matricula: str
+    km: int | None = None
+    descricao_avaria: str = ""
+    marca: str | None = None
+    modelo: str | None = None
+    cliente_id: int | None = None
+    cliente_nome: str | None = None
+    cliente_telefone: str | None = None
+    taxa_hora: float = 35.0
+    iva: float = 23.0
+
+
 class OrdemUpdate(BaseModel):
     descricao_avaria: str | None = None
     trabalho_realizado: str | None = None

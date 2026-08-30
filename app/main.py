@@ -153,13 +153,70 @@ def listar_veiculos(q: str | None = None, db: Session = Depends(get_db)):
 @app.post("/api/veiculos", status_code=201)
 def criar_veiculo(dados: schemas.VeiculoIn, db: Session = Depends(get_db)):
     matricula = dados.matricula.strip().upper()
-    if db.scalar(select(models.Veiculo).where(models.Veiculo.matricula == matricula)):
+    if _procurar_veiculo(db, matricula):
         raise HTTPException(409, "Já existe um veículo com essa matrícula")
     veiculo = models.Veiculo(**{**dados.model_dump(), "matricula": matricula})
     db.add(veiculo)
     db.commit()
     db.refresh(veiculo)
     return _veiculo_out(veiculo)
+
+
+def _procurar_veiculo(db: Session, matricula: str) -> models.Veiculo | None:
+    """Procura ignorando espaços, traços e maiúsculas (AA-12-BB == aa12bb)."""
+    normalizada = "".join(c for c in matricula.upper() if c.isalnum())
+    coluna = func.replace(func.replace(func.upper(models.Veiculo.matricula), "-", ""), " ", "")
+    return db.scalar(select(models.Veiculo).where(coluna == normalizada))
+
+
+@app.get("/api/veiculos/por-matricula/{matricula}")
+def procurar_por_matricula(matricula: str, db: Session = Depends(get_db)):
+    veiculo = _procurar_veiculo(db, matricula)
+    if veiculo is None:
+        return {"encontrado": False}
+    ultima = veiculo.ordens[-1] if veiculo.ordens else None
+    return {
+        "encontrado": True,
+        "veiculo": _veiculo_out(veiculo),
+        "visitas": len(veiculo.ordens),
+        "ultima_visita": ultima.aberta_em if ultima else None,
+        "ultima_avaria": ultima.descricao_avaria if ultima else None,
+    }
+
+
+@app.post("/api/entrada", status_code=201)
+def entrada_rapida(dados: schemas.EntradaRapida, db: Session = Depends(get_db)):
+    """Receção de um carro num só passo: cria/atualiza veículo e dono e abre a obra."""
+    matricula = dados.matricula.strip().upper()
+    veiculo = _procurar_veiculo(db, matricula)
+    if veiculo is None:
+        veiculo = models.Veiculo(matricula=matricula, marca=dados.marca, modelo=dados.modelo)
+        db.add(veiculo)
+    else:
+        veiculo.marca = dados.marca or veiculo.marca
+        veiculo.modelo = dados.modelo or veiculo.modelo
+
+    if dados.cliente_id:
+        veiculo.cliente_id = dados.cliente_id
+    elif dados.cliente_nome and not veiculo.cliente_id:
+        cliente = models.Cliente(nome=dados.cliente_nome, telefone=dados.cliente_telefone)
+        db.add(cliente)
+        veiculo.cliente = cliente
+
+    if dados.km is not None:
+        veiculo.km_atuais = dados.km
+
+    ordem = models.OrdemServico(
+        veiculo=veiculo,
+        descricao_avaria=dados.descricao_avaria,
+        km_entrada=dados.km,
+        taxa_hora=dados.taxa_hora,
+        iva=dados.iva,
+    )
+    db.add(ordem)
+    db.commit()
+    db.refresh(ordem)
+    return _ordem_out(ordem, detalhe=True)
 
 
 @app.get("/api/veiculos/{veiculo_id}")

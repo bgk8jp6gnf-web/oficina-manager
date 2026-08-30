@@ -3,63 +3,44 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta name="theme-color" content="#0f172a" />
+<meta name="theme-color" content="#0b3b6f" />
 <title>Oficina · Gestão</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230b3b6f'/><text x='16' y='22' font-size='16' font-family='sans-serif' font-weight='bold' fill='white' text-anchor='middle'>OF</text></svg>" />
 <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
-<header class="topbar">
-  <button id="btn-voltar" class="ghost hidden">‹</button>
-  <h1 id="titulo">Oficina</h1>
-  <button id="btn-atualizar" class="ghost">⟳</button>
-</header>
+<div class="app">
+  <aside class="sidebar">
+    <div class="marca"><span class="logo">OF</span><div><strong>Oficina</strong><small>Gestão de serviço</small></div></div>
+    <nav class="nav-lateral">
+      <button data-vista="inicio"><span class="ic">◎</span>Início</button>
+      <button data-vista="ordens"><span class="ic">🔧</span>Obras</button>
+      <button data-vista="veiculos"><span class="ic">🚗</span>Viaturas</button>
+      <button data-vista="pecas"><span class="ic">📦</span>Peças</button>
+      <button data-vista="clientes"><span class="ic">👤</span>Clientes</button>
+    </nav>
+    <button class="primario grande" data-acao="entrada">+ Entrada de viatura</button>
+  </aside>
 
-<main id="conteudo"></main>
+  <div class="painel">
+    <header class="topbar">
+      <button id="btn-voltar" class="icone hidden" title="Voltar">‹</button>
+      <div class="titulos"><h1 id="titulo">Início</h1><p id="subtitulo"></p></div>
+      <button id="btn-atualizar" class="icone" title="Atualizar">⟳</button>
+    </header>
+    <main id="conteudo"></main>
+  </div>
+</div>
 
 <nav class="tabbar">
-  <button data-vista="ordens" class="ativo"><span>🔧</span>Obras</button>
-  <button data-vista="veiculos"><span>🚗</span>Veículos</button>
+  <button data-vista="inicio"><span>◎</span>Início</button>
+  <button data-vista="ordens"><span>🔧</span>Obras</button>
+  <button class="destaque" data-acao="entrada"><span>＋</span>Entrada</button>
+  <button data-vista="veiculos"><span>🚗</span>Viaturas</button>
   <button data-vista="pecas"><span>📦</span>Peças</button>
-  <button data-vista="resumo"><span>📊</span>Resumo</button>
 </nav>
 
-<template id="tpl-ordens">
-  <section class="vista">
-    <div class="barra">
-      <input id="pesquisa-ordens" type="search" placeholder="Pesquisar matrícula…" />
-      <select id="filtro-estado">
-        <option value="">Todos os estados</option>
-        <option value="aberta">Aberta</option>
-        <option value="em_curso">Em curso</option>
-        <option value="concluida">Concluída</option>
-        <option value="faturada">Faturada</option>
-      </select>
-    </div>
-    <div id="lista-ordens" class="lista"></div>
-    <button id="nova-ordem" class="fab">+ Nova obra</button>
-  </section>
-</template>
-
-<template id="tpl-veiculos">
-  <section class="vista">
-    <div class="barra">
-      <input id="pesquisa-veiculos" type="search" placeholder="Matrícula, marca, modelo…" />
-    </div>
-    <div id="lista-veiculos" class="lista"></div>
-    <button id="novo-veiculo" class="fab">+ Novo veículo</button>
-  </section>
-</template>
-
-<template id="tpl-pecas">
-  <section class="vista">
-    <div class="barra">
-      <input id="pesquisa-pecas" type="search" placeholder="Referência ou descrição…" />
-    </div>
-    <div id="lista-pecas" class="lista"></div>
-    <button id="nova-peca" class="fab">+ Nova peça</button>
-  </section>
-</template>
-
+<div id="toasts" class="toasts"></div>
 <script src="/static/app.js"></script>
 </body>
 </html>
