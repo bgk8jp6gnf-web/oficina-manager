@@ -3,7 +3,7 @@ const conteudo = $("#conteudo");
 const titulo = $("#titulo");
 const btnVoltar = $("#btn-voltar");
 
-const estado = { vista: "ordens", ordemId: null };
+const estado = { vista: "ordens", ordemId: null, veiculoId: null };
 
 const eur = (v) => `${(v ?? 0).toFixed(2)} €`;
 const esc = (s) =>
@@ -90,6 +90,7 @@ async function vistaOrdens() {
         <p>${esc(o.descricao_avaria || "sem descrição")}</p>
         <p>${o.totais.horas} h · peças ${eur(o.totais.total_pecas)} · <strong>${eur(o.totais.total)}</strong>
           ${o.cronometro_ativo ? '<span class="cron">● a decorrer</span>' : ""}</p>
+        <div class="acoes"><button class="sec" data-ficha="${o.veiculo_id}">Histórico do carro</button></div>
       </div>`
           )
           .join("")
@@ -97,6 +98,13 @@ async function vistaOrdens() {
     lista.querySelectorAll(".card").forEach((c) => {
       c.onclick = () => {
         estado.ordemId = Number(c.dataset.id);
+        render();
+      };
+    });
+    lista.querySelectorAll("[data-ficha]").forEach((b) => {
+      b.onclick = (ev) => {
+        ev.stopPropagation();
+        estado.veiculoId = Number(b.dataset.ficha);
         render();
       };
     });
@@ -151,6 +159,7 @@ async function vistaOrdem(id) {
       <h3>${esc(o.veiculo?.matricula)} <span class="badge ${o.estado}">${o.estado.replace("_", " ")}</span></h3>
       <p>${esc(o.veiculo?.marca || "")} ${esc(o.veiculo?.modelo || "")} ${o.veiculo?.ano || ""}</p>
       <p>Cliente: ${esc(o.veiculo?.cliente?.nome || "—")} ${o.veiculo?.cliente?.telefone ? "· " + esc(o.veiculo.cliente.telefone) : ""}</p>
+      <p><a href="#" id="ver-historico" style="color:var(--accent)">Ver histórico deste carro ›</a></p>
       <p>Km: ${o.km_entrada ?? o.veiculo?.km_atuais ?? "—"} · Aberta em ${dataHora(o.aberta_em)}</p>
       <p><strong>Avaria:</strong> ${esc(o.descricao_avaria || "—")}</p>
       <p><strong>Trabalho:</strong> ${esc(o.trabalho_realizado || "—")}</p>
@@ -216,6 +225,13 @@ async function vistaOrdem(id) {
     </div>`;
 
   $("#imprimir").onclick = () => window.print();
+
+  $("#ver-historico").onclick = (ev) => {
+    ev.preventDefault();
+    estado.ordemId = null;
+    estado.veiculoId = o.veiculo_id;
+    render();
+  };
 
   $("#editar-ordem").onclick = () =>
     modal(
@@ -348,6 +364,91 @@ async function vistaOrdem(id) {
   });
 }
 
+// ------------------------------------------------------------------ ficha do veículo
+async function vistaVeiculo(id) {
+  const v = await api(`/veiculos/${id}`);
+  const r = v.resumo;
+  titulo.textContent = `Ficha ${v.matricula}`;
+  conteudo.innerHTML = `
+    <div class="card">
+      <h3>${esc(v.matricula)}</h3>
+      <p>${esc(v.marca || "")} ${esc(v.modelo || "")} ${v.ano || ""} ${v.vin ? "· VIN " + esc(v.vin) : ""}</p>
+      <p>Dono: ${esc(v.cliente?.nome || "—")} ${v.cliente?.telefone ? "· " + esc(v.cliente.telefone) : ""}</p>
+      <p>${v.km_atuais} km atuais</p>
+      <div class="acoes">
+        <button class="sec" id="ficha-km">Atualizar km</button>
+        <button id="ficha-obra">Nova obra</button>
+      </div>
+    </div>
+
+    <div class="card totais">
+      <div><span>Visitas à oficina</span><span>${r.visitas}</span></div>
+      <div><span>Última visita</span><span>${dataHora(r.ultima_visita)}</span></div>
+      <div><span>Horas de mão de obra</span><span>${r.total_horas} h</span></div>
+      <div class="grande"><span>Já faturado</span><span>${eur(r.total_gasto)}</span></div>
+    </div>
+
+    <h3 style="margin:18px 4px 8px">Histórico</h3>
+    <div class="lista">
+      ${
+        v.historico.length
+          ? v.historico
+              .map(
+                (o) => `<div class="card" data-obra-id="${o.id}">
+                  <h3>#${o.id} · ${dataHora(o.aberta_em).split(",")[0]}
+                    <span class="badge ${o.estado}">${o.estado.replace("_", " ")}</span></h3>
+                  <p>${o.km_entrada ? o.km_entrada + " km" : "km não registados"} · ${o.totais.horas} h · <strong>${eur(o.totais.total)}</strong></p>
+                  <p><strong>Avaria:</strong> ${esc(o.descricao_avaria || "—")}</p>
+                  <p><strong>Trabalho:</strong> ${esc(o.trabalho_realizado || "—")}</p>
+                  ${
+                    o.pecas.length
+                      ? `<p><strong>Peças:</strong> ${o.pecas
+                          .map((p) => `${p.quantidade}× ${esc(p.descricao)}`)
+                          .join(", ")}</p>`
+                      : ""
+                  }
+                </div>`
+              )
+              .join("")
+          : '<p class="vazio">Primeira vez na oficina — sem histórico.</p>'
+      }
+    </div>`;
+
+  conteudo.querySelectorAll("[data-obra-id]").forEach((c) => {
+    c.onclick = () => {
+      estado.veiculoId = null;
+      estado.ordemId = Number(c.dataset.obraId);
+      render();
+    };
+  });
+  $("#ficha-km").onclick = () =>
+    modal("Atualizar km", [{ nome: "km_atuais", rotulo: "Km atuais", tipo: "number", valor: v.km_atuais }], (d) =>
+      api(`/veiculos/${v.id}`, { method: "PATCH", body: { km_atuais: num(d.km_atuais) } })
+    );
+  $("#ficha-obra").onclick = () =>
+    modal(
+      "Nova obra",
+      [
+        { nome: "km_entrada", rotulo: "Km atuais", tipo: "number", valor: v.km_atuais },
+        { nome: "descricao_avaria", rotulo: "O que veio arranjar", tipo: "textarea" },
+        { nome: "taxa_hora", rotulo: "€/hora", tipo: "number", passo: "0.5", valor: 35 },
+      ],
+      async (d) => {
+        const nova = await api("/ordens", {
+          method: "POST",
+          body: {
+            veiculo_id: v.id,
+            km_entrada: num(d.km_entrada),
+            descricao_avaria: d.descricao_avaria,
+            taxa_hora: num(d.taxa_hora, 35),
+          },
+        });
+        estado.veiculoId = null;
+        estado.ordemId = nova.id;
+      }
+    );
+}
+
 // ------------------------------------------------------------------ veículos
 async function vistaVeiculos() {
   conteudo.innerHTML = $("#tpl-veiculos").innerHTML;
@@ -363,12 +464,19 @@ async function vistaVeiculos() {
               <p>${esc(v.marca || "")} ${esc(v.modelo || "")} ${v.ano || ""}</p>
               <p>${v.km_atuais} km · ${esc(v.cliente?.nome || "sem dono associado")}</p>
               <div class="acoes"><button class="sec" data-km="${v.id}">Atualizar km</button>
+                <button class="sec" data-ficha="${v.id}">Histórico</button>
                 <button data-obra="${v.id}">Nova obra</button></div>
             </div>`
           )
           .join("")
       : '<p class="vazio">Sem veículos.</p>';
 
+    lista.querySelectorAll("[data-ficha]").forEach((b) => {
+      b.onclick = () => {
+        estado.veiculoId = Number(b.dataset.ficha);
+        render();
+      };
+    });
     lista.querySelectorAll("[data-km]").forEach((b) => {
       b.onclick = () =>
         modal("Atualizar km", [{ nome: "km_atuais", rotulo: "Km atuais", tipo: "number" }], (d) =>
@@ -507,10 +615,31 @@ async function vistaResumo() {
 }
 
 // ------------------------------------------------------------------ router
+function lerHash() {
+  const [, tipo, id] = (location.hash || "").split("/");
+  if (tipo === "obra") return { vista: "ordens", ordemId: Number(id), veiculoId: null };
+  if (tipo === "veiculo") return { vista: "veiculos", ordemId: null, veiculoId: Number(id) };
+  return { vista: tipo || "ordens", ordemId: null, veiculoId: null };
+}
+
+function escreverHash() {
+  const novo = estado.ordemId
+    ? `#/obra/${estado.ordemId}`
+    : estado.veiculoId
+    ? `#/veiculo/${estado.veiculoId}`
+    : `#/${estado.vista}`;
+  if (location.hash !== novo) history.replaceState(null, "", novo);
+}
+
 async function render() {
   try {
-    btnVoltar.classList.toggle("hidden", !estado.ordemId);
+    escreverHash();
+    document.querySelectorAll(".tabbar button").forEach((b) =>
+      b.classList.toggle("ativo", b.dataset.vista === estado.vista)
+    );
+    btnVoltar.classList.toggle("hidden", !estado.ordemId && !estado.veiculoId);
     if (estado.ordemId) return await vistaOrdem(estado.ordemId);
+    if (estado.veiculoId) return await vistaVeiculo(estado.veiculoId);
     titulo.textContent = { ordens: "Obras", veiculos: "Veículos", pecas: "Peças", resumo: "Resumo" }[estado.vista];
     if (estado.vista === "ordens") return await vistaOrdens();
     if (estado.vista === "veiculos") return await vistaVeiculos();
@@ -523,17 +652,18 @@ async function render() {
 
 document.querySelectorAll(".tabbar button").forEach((b) => {
   b.onclick = () => {
-    document.querySelectorAll(".tabbar button").forEach((x) => x.classList.remove("ativo"));
-    b.classList.add("ativo");
     estado.vista = b.dataset.vista;
     estado.ordemId = null;
+    estado.veiculoId = null;
     render();
   };
 });
 btnVoltar.onclick = () => {
   estado.ordemId = null;
+  estado.veiculoId = null;
   render();
 };
 $("#btn-atualizar").onclick = render;
 
+Object.assign(estado, lerHash());
 render();

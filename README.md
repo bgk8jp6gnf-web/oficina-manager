@@ -53,6 +53,9 @@ total       = subtotal + IVA
 ## Funcionalidades
 
 - Registar veículo e dono a partir do telemóvel, com atualização de km
+- Ficha do veículo com histórico contínuo: todas as visitas (data, km, avaria, trabalho, peças,
+  custo), nº de visitas, horas acumuladas e total já faturado; abrir nova obra a partir da ficha
+- Ligações diretas por URL: `#/veiculo/{id}` e `#/obra/{id}`
 - Abrir obra com descrição do que veio arranjar
 - Cronómetro (iniciar/parar) ou introdução manual de minutos, por mecânico
 - Adicionar peças do stock (abate quantidade) ou peças avulsas
@@ -65,7 +68,7 @@ total       = subtotal + IVA
 | --- | --- | --- |
 | GET/POST | `/api/clientes` | listar/criar clientes |
 | GET/POST | `/api/veiculos` | listar/criar veículos (`?q=` pesquisa) |
-| GET/PATCH | `/api/veiculos/{id}` | detalhe com histórico / atualizar km e dados |
+| GET/PATCH | `/api/veiculos/{id}` | ficha com histórico e resumo / atualizar km e dados |
 | GET/POST | `/api/pecas` | catálogo de peças |
 | GET/POST | `/api/ordens` | listar (`?estado=`, `?q=`) / criar obras |
 | GET/PATCH | `/api/ordens/{id}` | detalhe com totais / atualizar |

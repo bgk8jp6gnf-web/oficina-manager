@@ -167,9 +167,21 @@ def obter_veiculo(veiculo_id: int, db: Session = Depends(get_db)):
     veiculo = db.get(models.Veiculo, veiculo_id)
     if veiculo is None:
         raise HTTPException(404, "Veículo não encontrado")
+    historico = [_ordem_out(o, detalhe=True) for o in reversed(veiculo.ordens)]
+    fechadas = [
+        h
+        for h in historico
+        if h["estado"] in {models.EstadoOS.concluida.value, models.EstadoOS.faturada.value}
+    ]
     return {
         **_veiculo_out(veiculo),
-        "historico": [_ordem_out(o) for o in veiculo.ordens],
+        "historico": historico,
+        "resumo": {
+            "visitas": len(historico),
+            "ultima_visita": historico[0]["aberta_em"] if historico else None,
+            "total_gasto": round(sum(h["totais"]["total"] for h in fechadas), 2),
+            "total_horas": round(sum(h["totais"]["horas"] for h in historico), 2),
+        },
     }
 
 

@@ -46,7 +46,9 @@ class Veiculo(Base):
     criado_em: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     cliente: Mapped["Cliente | None"] = relationship(back_populates="veiculos")
-    ordens: Mapped[list["OrdemServico"]] = relationship(back_populates="veiculo")
+    ordens: Mapped[list["OrdemServico"]] = relationship(
+        back_populates="veiculo", order_by="OrdemServico.id"
+    )
 
 
 class Mecanico(Base):
