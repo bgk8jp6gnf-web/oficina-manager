@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0f172a" />
+<title>Oficina · Gestão</title>
+<link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <button id="btn-voltar" class="ghost hidden">‹</button>
+  <h1 id="titulo">Oficina</h1>
+  <button id="btn-atualizar" class="ghost">⟳</button>
+</header>
+
+<main id="conteudo"></main>
+
+<nav class="tabbar">
+  <button data-vista="ordens" class="ativo"><span>🔧</span>Obras</button>
+  <button data-vista="veiculos"><span>🚗</span>Veículos</button>
+  <button data-vista="pecas"><span>📦</span>Peças</button>
+  <button data-vista="resumo"><span>📊</span>Resumo</button>
+</nav>
+
+<template id="tpl-ordens">
+  <section class="vista">
+    <div class="barra">
+      <input id="pesquisa-ordens" type="search" placeholder="Pesquisar matrícula…" />
+      <select id="filtro-estado">
+        <option value="">Todos os estados</option>
+        <option value="aberta">Aberta</option>
+        <option value="em_curso">Em curso</option>
+        <option value="concluida">Concluída</option>
+        <option value="faturada">Faturada</option>
+      </select>
+    </div>
+    <div id="lista-ordens" class="lista"></div>
+    <button id="nova-ordem" class="fab">+ Nova obra</button>
+  </section>
+</template>
+
+<template id="tpl-veiculos">
+  <section class="vista">
+    <div class="barra">
+      <input id="pesquisa-veiculos" type="search" placeholder="Matrícula, marca, modelo…" />
+    </div>
+    <div id="lista-veiculos" class="lista"></div>
+    <button id="novo-veiculo" class="fab">+ Novo veículo</button>
+  </section>
+</template>
+
+<template id="tpl-pecas">
+  <section class="vista">
+    <div class="barra">
+      <input id="pesquisa-pecas" type="search" placeholder="Referência ou descrição…" />
+    </div>
+    <div id="lista-pecas" class="lista"></div>
+    <button id="nova-peca" class="fab">+ Nova peça</button>
+  </section>
+</template>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
