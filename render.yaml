@@ -13,3 +13,9 @@ services:
         generateValue: true
       - key: MEDIA_DIR
         value: /var/media
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        value: oficina

@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from . import auth, models, schemas
+from . import auth, models, schemas, storage
 from .db import Base, engine, get_db
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -31,6 +31,8 @@ def healthz() -> dict:
 def on_startup() -> None:
     Base.metadata.create_all(engine)
     MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    if storage.ativo():
+        storage.criar_bucket()
 
 
 def _cliente_out(c: models.Cliente) -> dict:
@@ -50,7 +52,7 @@ def _ficheiro_out(f: models.Ficheiro) -> dict:
         "ordem_id": f.ordem_id,
         "nome": f.nome,
         "tipo": f.tipo,
-        "url": f"/media/{f.caminho}",
+        "url": storage.url(f.caminho),
         "legenda": f.legenda,
         "criado_em": f.criado_em,
     }
@@ -292,7 +294,7 @@ def listar_ficheiros(veiculo_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/veiculos/{veiculo_id}/ficheiros", status_code=201)
-async def carregar_ficheiro(
+def carregar_ficheiro(
     veiculo_id: int,
     ficheiro: UploadFile = File(...),
     ordem_id: int | None = Form(default=None),
@@ -312,18 +314,22 @@ async def carregar_ficheiro(
     else:
         raise HTTPException(400, "Só são aceites fotografias ou vídeos")
 
-    pasta = MEDIA_DIR / str(veiculo_id)
-    pasta.mkdir(parents=True, exist_ok=True)
-    nome_disco = f"{uuid.uuid4().hex}{extensao}"
-    with (pasta / nome_disco).open("wb") as destino:
-        shutil.copyfileobj(ficheiro.file, destino)
+    nome_disco = f"{veiculo_id}/{uuid.uuid4().hex}{extensao}"
+    if storage.ativo():
+        caminho = storage.guardar(nome_disco, ficheiro.file.read())
+    else:
+        destino = MEDIA_DIR / nome_disco
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        with destino.open("wb") as saida:
+            shutil.copyfileobj(ficheiro.file, saida)
+        caminho = nome_disco
 
     registo = models.Ficheiro(
         veiculo_id=veiculo_id,
         ordem_id=ordem_id,
         nome=ficheiro.filename or nome_disco,
         tipo=tipo,
-        caminho=f"{veiculo_id}/{nome_disco}",
+        caminho=caminho,
         legenda=legenda.strip(),
     )
     db.add(registo)
@@ -337,7 +343,10 @@ def apagar_ficheiro(ficheiro_id: int, db: Session = Depends(get_db)):
     registo = db.get(models.Ficheiro, ficheiro_id)
     if registo is None:
         raise HTTPException(404, "Ficheiro não encontrado")
-    (MEDIA_DIR / registo.caminho).unlink(missing_ok=True)
+    if registo.caminho.startswith(storage.PREFIXO):
+        storage.apagar(registo.caminho)
+    else:
+        (MEDIA_DIR / registo.caminho).unlink(missing_ok=True)
     db.delete(registo)
     db.commit()
 
