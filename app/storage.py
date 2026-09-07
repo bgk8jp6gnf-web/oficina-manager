@@ -40,7 +40,7 @@ def criar_bucket() -> None:
         _pedido("GET", f"/storage/v1/bucket/{BUCKET}", None, "application/json")
         return
     except urllib.error.HTTPError as erro:
-        if erro.code != 404:
+        if erro.code != 404 and "NoSuchBucket" not in erro.msg:
             raise
     corpo = json.dumps({"id": BUCKET, "name": BUCKET, "public": True}).encode()
     _pedido("POST", "/storage/v1/bucket", corpo, "application/json")
