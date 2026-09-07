@@ -1,3 +1,4 @@
+import logging
 import os
 import shutil
 import uuid
@@ -18,6 +19,8 @@ MEDIA_DIR = Path(os.getenv("MEDIA_DIR", RAIZ / "media"))
 EXTENSOES_FOTO = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".gif"}
 EXTENSOES_VIDEO = {".mp4", ".mov", ".webm", ".m4v", ".3gp"}
 
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title="Gestão de Oficina Automóvel", version="1.0.0")
 auth.registar(app)
 
@@ -32,7 +35,10 @@ def on_startup() -> None:
     Base.metadata.create_all(engine)
     MEDIA_DIR.mkdir(parents=True, exist_ok=True)
     if storage.ativo():
-        storage.criar_bucket()
+        try:
+            storage.criar_bucket()
+        except Exception:
+            logger.exception("Não foi possível preparar o bucket do Supabase Storage")
 
 
 def _cliente_out(c: models.Cliente) -> dict:
