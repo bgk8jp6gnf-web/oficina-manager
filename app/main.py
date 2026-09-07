@@ -24,7 +24,7 @@ auth.registar(app)
 
 @app.get("/healthz", include_in_schema=False)
 def healthz() -> dict:
-    return {"ok": True}
+    return {"ok": True, "storage": storage.ativo()}
 
 
 @app.on_event("startup")
