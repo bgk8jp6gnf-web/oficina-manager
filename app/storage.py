@@ -10,9 +10,9 @@ import os
 import urllib.error
 import urllib.request
 
-URL = os.getenv("SUPABASE_URL", "").rstrip("/")
-CHAVE = os.getenv("SUPABASE_SERVICE_KEY", "")
-BUCKET = os.getenv("SUPABASE_BUCKET", "oficina")
+URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+CHAVE = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
+BUCKET = os.getenv("SUPABASE_BUCKET", "oficina").strip()
 PREFIXO = "sb:"
 
 
@@ -26,8 +26,12 @@ def _pedido(metodo: str, caminho: str, dados: bytes | None, content_type: str) -
     pedido.add_header("Authorization", f"Bearer {CHAVE}")
     if dados is not None:
         pedido.add_header("Content-Type", content_type)
-    with urllib.request.urlopen(pedido, timeout=60) as resposta:
-        return resposta.read()
+    try:
+        with urllib.request.urlopen(pedido, timeout=60) as resposta:
+            return resposta.read()
+    except urllib.error.HTTPError as erro:
+        erro.msg = f"{erro.msg} ({metodo} {caminho}: {erro.read()[:300].decode(errors='replace')})"
+        raise
 
 
 def criar_bucket() -> None:
