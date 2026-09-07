@@ -1,0 +1,20 @@
+[project]
+name = "oficina-manager"
+version = "1.0.0"
+description = "Gestão de oficina automóvel: viaturas, obras, tempos, peças e histórico"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.34.0",
+    "SQLAlchemy==2.0.36",
+    "pydantic==2.10.4",
+    "python-multipart==0.0.20",
+    "psycopg[binary]==3.2.3",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["app"]

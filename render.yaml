@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: oficina-manager
+    runtime: docker
+    plan: free
+    healthCheckPath: /healthz
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: OFICINA_PASSWORD
+        sync: false
+      - key: OFICINA_SECRET
+        generateValue: true
+      - key: MEDIA_DIR
+        value: /var/media

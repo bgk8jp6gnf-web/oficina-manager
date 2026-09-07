@@ -31,14 +31,17 @@ class VeiculoUpdate(BaseModel):
 
 class MecanicoIn(BaseModel):
     nome: str
-    custo_hora: float = 35.0
+    telefone: str | None = None
+    especialidade: str | None = None
+    taxa_hora: float = 35.0
 
 
-class PecaIn(BaseModel):
-    referencia: str
-    descricao: str
-    preco_unitario: float = 0.0
-    stock: float = 0.0
+class MecanicoUpdate(BaseModel):
+    nome: str | None = None
+    telefone: str | None = None
+    especialidade: str | None = None
+    taxa_hora: float | None = Field(default=None, ge=0)
+    ativo: int | None = None
 
 
 class OrdemIn(BaseModel):
@@ -75,13 +78,12 @@ class OrdemUpdate(BaseModel):
 class TempoIn(BaseModel):
     mecanico_id: int | None = None
     descricao: str = ""
-    minutos: float | None = Field(default=None, ge=0)
-    inicio: datetime | None = None
-    fim: datetime | None = None
+    minutos: float = Field(ge=0)
+    data: datetime | None = None
 
 
 class PecaUsadaIn(BaseModel):
-    peca_id: int | None = None
-    descricao: str = ""
-    quantidade: float = 1.0
-    preco_unitario: float | None = None
+    descricao: str
+    fornecedor: str = ""
+    quantidade: float = Field(default=1.0, gt=0)
+    preco_unitario: float = Field(default=0.0, ge=0)

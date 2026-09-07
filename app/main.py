@@ -1,22 +1,36 @@
+import os
+import shutil
+import uuid
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from . import models, schemas
+from . import auth, models, schemas
 from .db import Base, engine, get_db
 
-STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+RAIZ = Path(__file__).resolve().parent.parent
+STATIC_DIR = RAIZ / "static"
+MEDIA_DIR = Path(os.getenv("MEDIA_DIR", RAIZ / "media"))
+EXTENSOES_FOTO = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".gif"}
+EXTENSOES_VIDEO = {".mp4", ".mov", ".webm", ".m4v", ".3gp"}
 
 app = FastAPI(title="Gestão de Oficina Automóvel", version="1.0.0")
+auth.registar(app)
+
+
+@app.get("/healthz", include_in_schema=False)
+def healthz() -> dict:
+    return {"ok": True}
 
 
 @app.on_event("startup")
 def on_startup() -> None:
     Base.metadata.create_all(engine)
+    MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _cliente_out(c: models.Cliente) -> dict:
@@ -26,6 +40,19 @@ def _cliente_out(c: models.Cliente) -> dict:
         "telefone": c.telefone,
         "email": c.email,
         "nif": c.nif,
+    }
+
+
+def _ficheiro_out(f: models.Ficheiro) -> dict:
+    return {
+        "id": f.id,
+        "veiculo_id": f.veiculo_id,
+        "ordem_id": f.ordem_id,
+        "nome": f.nome,
+        "tipo": f.tipo,
+        "url": f"/media/{f.caminho}",
+        "legenda": f.legenda,
+        "criado_em": f.criado_em,
     }
 
 
@@ -44,9 +71,9 @@ def _veiculo_out(v: models.Veiculo) -> dict:
 
 
 def calcular_totais(ordem: models.OrdemServico) -> dict:
-    minutos = sum(t.minutos_efetivos for t in ordem.tempos)
+    minutos = sum(t.minutos for t in ordem.tempos)
     horas = minutos / 60.0
-    total_mao_obra = round(horas * ordem.taxa_hora, 2)
+    total_mao_obra = round(sum(t.valor(ordem.taxa_hora) for t in ordem.tempos), 2)
     total_pecas = round(sum(p.quantidade * p.preco_unitario for p in ordem.pecas), 2)
     subtotal = round(total_mao_obra + total_pecas - ordem.desconto, 2)
     valor_iva = round(subtotal * ordem.iva / 100.0, 2)
@@ -77,7 +104,6 @@ def _ordem_out(o: models.OrdemServico, detalhe: bool = False) -> dict:
         "aberta_em": o.aberta_em,
         "fechada_em": o.fechada_em,
         "totais": calcular_totais(o),
-        "cronometro_ativo": any(t.fim is None and t.minutos is None for t in o.tempos),
     }
     if detalhe:
         data["tempos"] = [
@@ -86,19 +112,18 @@ def _ordem_out(o: models.OrdemServico, detalhe: bool = False) -> dict:
                 "descricao": t.descricao,
                 "mecanico_id": t.mecanico_id,
                 "mecanico": t.mecanico.nome if t.mecanico else None,
-                "inicio": t.inicio,
-                "fim": t.fim,
-                "minutos": round(t.minutos_efetivos, 1),
-                "a_decorrer": t.fim is None and t.minutos is None,
+                "data": t.data,
+                "minutos": round(t.minutos, 1),
+                "taxa_hora": t.taxa_aplicada(o.taxa_hora),
+                "valor": round(t.valor(o.taxa_hora), 2),
             }
             for t in o.tempos
         ]
         data["pecas"] = [
             {
                 "id": p.id,
-                "peca_id": p.peca_id,
-                "referencia": p.peca.referencia if p.peca else None,
                 "descricao": p.descricao,
+                "fornecedor": p.fornecedor,
                 "quantidade": p.quantidade,
                 "preco_unitario": p.preco_unitario,
                 "total": round(p.quantidade * p.preco_unitario, 2),
@@ -232,6 +257,7 @@ def obter_veiculo(veiculo_id: int, db: Session = Depends(get_db)):
     ]
     return {
         **_veiculo_out(veiculo),
+        "ficheiros": [_ficheiro_out(f) for f in veiculo.ficheiros],
         "historico": historico,
         "resumo": {
             "visitas": len(historico),
@@ -256,11 +282,82 @@ def atualizar_veiculo(
     return _veiculo_out(veiculo)
 
 
+# ---------------------------------------------------------------- fotos e vídeos
+@app.get("/api/veiculos/{veiculo_id}/ficheiros")
+def listar_ficheiros(veiculo_id: int, db: Session = Depends(get_db)):
+    veiculo = db.get(models.Veiculo, veiculo_id)
+    if veiculo is None:
+        raise HTTPException(404, "Veículo não encontrado")
+    return [_ficheiro_out(f) for f in veiculo.ficheiros]
+
+
+@app.post("/api/veiculos/{veiculo_id}/ficheiros", status_code=201)
+async def carregar_ficheiro(
+    veiculo_id: int,
+    ficheiro: UploadFile = File(...),
+    ordem_id: int | None = Form(default=None),
+    legenda: str = Form(default=""),
+    db: Session = Depends(get_db),
+):
+    """Guarda uma foto ou vídeo da viatura (câmara do telemóvel ou ficheiro)."""
+    veiculo = db.get(models.Veiculo, veiculo_id)
+    if veiculo is None:
+        raise HTTPException(404, "Veículo não encontrado")
+
+    extensao = Path(ficheiro.filename or "").suffix.lower()
+    if extensao in EXTENSOES_FOTO:
+        tipo = "foto"
+    elif extensao in EXTENSOES_VIDEO:
+        tipo = "video"
+    else:
+        raise HTTPException(400, "Só são aceites fotografias ou vídeos")
+
+    pasta = MEDIA_DIR / str(veiculo_id)
+    pasta.mkdir(parents=True, exist_ok=True)
+    nome_disco = f"{uuid.uuid4().hex}{extensao}"
+    with (pasta / nome_disco).open("wb") as destino:
+        shutil.copyfileobj(ficheiro.file, destino)
+
+    registo = models.Ficheiro(
+        veiculo_id=veiculo_id,
+        ordem_id=ordem_id,
+        nome=ficheiro.filename or nome_disco,
+        tipo=tipo,
+        caminho=f"{veiculo_id}/{nome_disco}",
+        legenda=legenda.strip(),
+    )
+    db.add(registo)
+    db.commit()
+    db.refresh(registo)
+    return _ficheiro_out(registo)
+
+
+@app.delete("/api/ficheiros/{ficheiro_id}", status_code=204)
+def apagar_ficheiro(ficheiro_id: int, db: Session = Depends(get_db)):
+    registo = db.get(models.Ficheiro, ficheiro_id)
+    if registo is None:
+        raise HTTPException(404, "Ficheiro não encontrado")
+    (MEDIA_DIR / registo.caminho).unlink(missing_ok=True)
+    db.delete(registo)
+    db.commit()
+
+
 # ---------------------------------------------------------------- mecânicos
+def _mecanico_out(m: models.Mecanico) -> dict:
+    return {
+        "id": m.id,
+        "nome": m.nome,
+        "telefone": m.telefone,
+        "especialidade": m.especialidade,
+        "taxa_hora": m.taxa_hora,
+        "ativo": m.ativo,
+    }
+
+
 @app.get("/api/mecanicos")
 def listar_mecanicos(db: Session = Depends(get_db)):
     mecanicos = db.scalars(select(models.Mecanico).order_by(models.Mecanico.nome))
-    return [{"id": m.id, "nome": m.nome, "custo_hora": m.custo_hora} for m in mecanicos]
+    return [_mecanico_out(m) for m in mecanicos]
 
 
 @app.post("/api/mecanicos", status_code=201)
@@ -269,45 +366,80 @@ def criar_mecanico(dados: schemas.MecanicoIn, db: Session = Depends(get_db)):
     db.add(mecanico)
     db.commit()
     db.refresh(mecanico)
-    return {"id": mecanico.id, "nome": mecanico.nome, "custo_hora": mecanico.custo_hora}
+    return _mecanico_out(mecanico)
 
 
-# ---------------------------------------------------------------- peças
-@app.get("/api/pecas")
-def listar_pecas(q: str | None = None, db: Session = Depends(get_db)):
-    stmt = select(models.Peca).order_by(models.Peca.descricao)
-    if q:
-        like = f"%{q}%"
-        stmt = stmt.where(
-            or_(models.Peca.referencia.ilike(like), models.Peca.descricao.ilike(like))
+@app.get("/api/mecanicos/{mecanico_id}")
+def perfil_mecanico(mecanico_id: int, meses: int = 6, db: Session = Depends(get_db)):
+    """Perfil com resumo mensal de horas e mão de obra faturada pelo mecânico."""
+    mecanico = db.get(models.Mecanico, mecanico_id)
+    if mecanico is None:
+        raise HTTPException(404, "Mecânico não encontrado")
+
+    registos = list(
+        db.scalars(
+            select(models.RegistoTempo)
+            .where(models.RegistoTempo.mecanico_id == mecanico_id)
+            .order_by(models.RegistoTempo.data.desc())
         )
-    return [
+    )
+
+    por_mes: dict[str, dict] = {}
+    for r in registos:
+        chave = r.data.strftime("%Y-%m")
+        mes = por_mes.setdefault(chave, {"mes": chave, "minutos": 0.0, "valor": 0.0, "obras": set()})
+        mes["minutos"] += r.minutos
+        mes["valor"] += r.valor(r.ordem.taxa_hora)
+        mes["obras"].add(r.ordem_id)
+
+    resumo_mensal = [
         {
-            "id": p.id,
-            "referencia": p.referencia,
-            "descricao": p.descricao,
-            "preco_unitario": p.preco_unitario,
-            "stock": p.stock,
+            "mes": m["mes"],
+            "horas": round(m["minutos"] / 60.0, 2),
+            "valor": round(m["valor"], 2),
+            "obras": len(m["obras"]),
         }
-        for p in db.scalars(stmt)
+        for m in sorted(por_mes.values(), key=lambda m: m["mes"], reverse=True)[:meses]
     ]
 
+    trabalhos = [
+        {
+            "ordem_id": r.ordem_id,
+            "matricula": r.ordem.veiculo.matricula if r.ordem.veiculo else None,
+            "veiculo_id": r.ordem.veiculo_id,
+            "data": r.data,
+            "descricao": r.descricao,
+            "minutos": round(r.minutos, 1),
+            "valor": round(r.valor(r.ordem.taxa_hora), 2),
+        }
+        for r in registos[:15]
+    ]
 
-@app.post("/api/pecas", status_code=201)
-def criar_peca(dados: schemas.PecaIn, db: Session = Depends(get_db)):
-    if db.scalar(select(models.Peca).where(models.Peca.referencia == dados.referencia)):
-        raise HTTPException(409, "Já existe uma peça com essa referência")
-    peca = models.Peca(**dados.model_dump())
-    db.add(peca)
-    db.commit()
-    db.refresh(peca)
+    minutos_total = sum(r.minutos for r in registos)
     return {
-        "id": peca.id,
-        "referencia": peca.referencia,
-        "descricao": peca.descricao,
-        "preco_unitario": peca.preco_unitario,
-        "stock": peca.stock,
+        **_mecanico_out(mecanico),
+        "resumo_mensal": resumo_mensal,
+        "trabalhos": trabalhos,
+        "totais": {
+            "horas": round(minutos_total / 60.0, 2),
+            "valor": round(sum(r.valor(r.ordem.taxa_hora) for r in registos), 2),
+            "obras": len({r.ordem_id for r in registos}),
+        },
     }
+
+
+@app.patch("/api/mecanicos/{mecanico_id}")
+def atualizar_mecanico(
+    mecanico_id: int, dados: schemas.MecanicoUpdate, db: Session = Depends(get_db)
+):
+    mecanico = db.get(models.Mecanico, mecanico_id)
+    if mecanico is None:
+        raise HTTPException(404, "Mecânico não encontrado")
+    for campo, valor in dados.model_dump(exclude_none=True).items():
+        setattr(mecanico, campo, valor)
+    db.commit()
+    db.refresh(mecanico)
+    return _mecanico_out(mecanico)
 
 
 # ---------------------------------------------------------------- ordens
@@ -366,30 +498,20 @@ def atualizar_ordem(ordem_id: int, dados: schemas.OrdemUpdate, db: Session = Dep
 @app.post("/api/ordens/{ordem_id}/tempos", status_code=201)
 def registar_tempo(ordem_id: int, dados: schemas.TempoIn, db: Session = Depends(get_db)):
     ordem = _get_ordem(db, ordem_id)
+    mecanico = db.get(models.Mecanico, dados.mecanico_id) if dados.mecanico_id else None
+    if dados.mecanico_id and mecanico is None:
+        raise HTTPException(404, "Mecânico não encontrado")
     registo = models.RegistoTempo(
         ordem_id=ordem.id,
         mecanico_id=dados.mecanico_id,
         descricao=dados.descricao,
-        inicio=dados.inicio or models.utcnow(),
-        fim=dados.fim,
+        data=dados.data or models.utcnow(),
         minutos=dados.minutos,
+        taxa_hora=mecanico.taxa_hora if mecanico else ordem.taxa_hora,
     )
     db.add(registo)
     if ordem.estado == models.EstadoOS.aberta.value:
         ordem.estado = models.EstadoOS.em_curso.value
-    db.commit()
-    db.refresh(ordem)
-    return _ordem_out(ordem, detalhe=True)
-
-
-@app.post("/api/ordens/{ordem_id}/tempos/{tempo_id}/parar")
-def parar_tempo(ordem_id: int, tempo_id: int, db: Session = Depends(get_db)):
-    ordem = _get_ordem(db, ordem_id)
-    registo = db.get(models.RegistoTempo, tempo_id)
-    if registo is None or registo.ordem_id != ordem.id:
-        raise HTTPException(404, "Registo de tempo não encontrado")
-    if registo.fim is None and registo.minutos is None:
-        registo.fim = models.utcnow()
     db.commit()
     db.refresh(ordem)
     return _ordem_out(ordem, detalhe=True)
@@ -407,25 +529,17 @@ def apagar_tempo(ordem_id: int, tempo_id: int, db: Session = Depends(get_db)):
     return _ordem_out(ordem, detalhe=True)
 
 
-# ---------------------------------------------------------------- peças usadas
+# ---------------------------------------------------------------- peças da obra
 @app.post("/api/ordens/{ordem_id}/pecas", status_code=201)
 def adicionar_peca(ordem_id: int, dados: schemas.PecaUsadaIn, db: Session = Depends(get_db)):
     ordem = _get_ordem(db, ordem_id)
-    peca = db.get(models.Peca, dados.peca_id) if dados.peca_id else None
-    if dados.peca_id and peca is None:
-        raise HTTPException(404, "Peça não encontrada")
-    preco = dados.preco_unitario
-    if preco is None:
-        preco = peca.preco_unitario if peca else 0.0
     linha = models.PecaUsada(
         ordem_id=ordem.id,
-        peca_id=peca.id if peca else None,
-        descricao=dados.descricao or (peca.descricao if peca else ""),
+        descricao=dados.descricao,
+        fornecedor=dados.fornecedor,
         quantidade=dados.quantidade,
-        preco_unitario=preco,
+        preco_unitario=dados.preco_unitario,
     )
-    if peca:
-        peca.stock -= dados.quantidade
     db.add(linha)
     db.commit()
     db.refresh(ordem)
@@ -438,8 +552,6 @@ def remover_peca(ordem_id: int, linha_id: int, db: Session = Depends(get_db)):
     linha = db.get(models.PecaUsada, linha_id)
     if linha is None or linha.ordem_id != ordem.id:
         raise HTTPException(404, "Linha de peça não encontrada")
-    if linha.peca:
-        linha.peca.stock += linha.quantidade
     db.delete(linha)
     db.commit()
     db.refresh(ordem)
@@ -456,15 +568,23 @@ def resumo(db: Session = Depends(get_db)):
         por_estado[o.estado] = por_estado.get(o.estado, 0) + 1
         if o.estado in {models.EstadoOS.concluida.value, models.EstadoOS.faturada.value}:
             faturacao += calcular_totais(o)["total"]
+
+    mes = models.utcnow().strftime("%Y-%m")
+    minutos_mes = sum(
+        t.minutos for o in ordens for t in o.tempos if t.data.strftime("%Y-%m") == mes
+    )
     return {
         "ordens": len(ordens),
         "por_estado": por_estado,
         "veiculos": db.scalar(select(func.count()).select_from(models.Veiculo)),
         "clientes": db.scalar(select(func.count()).select_from(models.Cliente)),
         "faturacao_fechada": round(faturacao, 2),
+        "horas_mes": round(minutos_mes / 60.0, 2),
     }
 
 
+MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 

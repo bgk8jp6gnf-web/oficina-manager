@@ -5,16 +5,24 @@ const elTitulo = $("#titulo");
 const elSubtitulo = $("#subtitulo");
 const btnVoltar = $("#btn-voltar");
 
-const estado = { vista: "inicio", ordemId: null, veiculoId: null };
-let cronometros = null;
+const estado = { vista: "inicio", ordemId: null, veiculoId: null, mecanicoId: null };
 
 const TITULOS = {
   inicio: ["Início", "Resumo da oficina"],
   ordens: ["Obras", "Serviços em curso e concluídos"],
   veiculos: ["Viaturas", "Ficha e histórico de cada carro"],
-  pecas: ["Peças", "Catálogo e stock"],
   clientes: ["Clientes", "Donos das viaturas"],
+  mecanicos: ["Mecânicos", "Equipa, preço/hora e produção"],
   entrada: ["Entrada de viatura", "Receção em poucos segundos"],
+};
+
+const MESES = [
+  "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+  "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+];
+const nomeMes = (chave) => {
+  const [ano, mes] = chave.split("-");
+  return `${MESES[Number(mes) - 1]} de ${ano}`;
 };
 
 const nf = new Intl.NumberFormat("pt-PT", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -126,8 +134,7 @@ const cartaoObra = (o) => `
     <h3><span>${esc(o.veiculo?.matricula)} <small style="color:var(--suave);font-weight:600">#${o.id}</small></span>${etiqueta(o.estado)}</h3>
     <p>${esc([o.veiculo?.marca, o.veiculo?.modelo].filter(Boolean).join(" ") || "viatura")} · ${esc(o.veiculo?.cliente?.nome || "sem dono")}</p>
     <p><strong>${esc(o.descricao_avaria || "sem descrição")}</strong></p>
-    <p>${horas(o.totais.horas)} de mão de obra · peças ${eur(o.totais.total_pecas)} · <strong>${eur(o.totais.total)}</strong>
-      ${o.cronometro_ativo ? '<span class="cron-ativo">● a decorrer</span>' : ""}</p>
+    <p>${horas(o.totais.horas)} de mão de obra · peças ${eur(o.totais.total_pecas)} · <strong>${eur(o.totais.total)}</strong></p>
   </article>`;
 
 function ligarCartoes(raiz = conteudo) {
@@ -140,21 +147,30 @@ function ligarCartoes(raiz = conteudo) {
       irPara({ veiculoId: Number(c.dataset.veiculo) });
     };
   });
+  $$("[data-mecanico]", raiz).forEach((c) => {
+    c.onclick = (ev) => {
+      ev.stopPropagation();
+      irPara({ mecanicoId: Number(c.dataset.mecanico) });
+    };
+  });
 }
 
 // ------------------------------------------------------------------ início
 async function vistaInicio() {
   const [r, ordens] = await Promise.all([api("/resumo"), api("/ordens")]);
   const abertas = ordens.filter((o) => o.estado === "aberta" || o.estado === "em_curso");
-  const aDecorrer = ordens.filter((o) => o.cronometro_ativo);
   conteudo.innerHTML = `
     <div class="kpis">
       <div class="kpi"><small>Obras abertas</small><strong>${abertas.length}</strong></div>
-      <div class="kpi"><small>Cronómetros a contar</small><strong>${aDecorrer.length}</strong></div>
+      <div class="kpi"><small>Horas este mês</small><strong>${horas(r.horas_mes)}</strong></div>
       <div class="kpi"><small>Viaturas</small><strong>${r.veiculos}</strong></div>
       <div class="kpi destaque"><small>Faturado (obras fechadas)</small><strong>${eur(r.faturacao_fechada)}</strong></div>
     </div>
     <div class="acoes"><button class="primario grande" data-acao="entrada">+ Entrada de viatura</button></div>
+    <div class="chips atalhos">
+      <button class="chip" data-vista="mecanicos">👷 Mecânicos</button>
+      <button class="chip" data-vista="clientes">👤 Clientes</button>
+    </div>
     <h2 class="seccao">Em oficina agora</h2>
     <div class="lista">
       ${abertas.length ? abertas.map(cartaoObra).join("") : vazio("🅿️", "Nenhuma viatura em serviço.")}
@@ -327,14 +343,13 @@ async function vistaOrdem(id) {
             ? o.tempos
                 .map(
                   (r) => `<div class="linha">
-                    <span>${esc(r.descricao || "trabalho")}${r.mecanico ? ` · ${esc(r.mecanico)}` : ""}<br>
-                      <small>${dataHora(r.inicio)}</small></span>
-                    <span>${
-                      r.a_decorrer
-                        ? `<span class="cron-ativo" data-desde="${r.inicio}">…</span>
-                           <button class="sec" data-parar="${r.id}">Parar</button>`
-                        : duracao(r.minutos)
-                    }
+                    <span>${esc(r.descricao || "trabalho")}${
+                      r.mecanico_id
+                        ? ` · <a href="#/mecanico/${r.mecanico_id}">${esc(r.mecanico)}</a>`
+                        : ""
+                    }<br>
+                      <small>${dataCurta(r.data)} · ${duracao(r.minutos)} × ${eur(r.taxa_hora)}/h</small></span>
+                    <span><strong>${eur(r.valor)}</strong>
                     <button class="perigo" data-apagar-tempo="${r.id}" title="Apagar">✕</button></span>
                   </div>`
                 )
@@ -342,10 +357,7 @@ async function vistaOrdem(id) {
             : '<p class="ajuda">Ainda não há tempo registado nesta obra.</p>'
         }
       </div>
-      <div class="acoes">
-        <button id="iniciar-cron">▶ Iniciar cronómetro</button>
-        <button class="sec" id="add-tempo">Registar tempo manual</button>
-      </div>
+      <div class="acoes"><button id="add-tempo">+ Registar tempo</button></div>
     </article>
 
     <h2 class="seccao">Peças · ${eur(t.total_pecas)}</h2>
@@ -356,14 +368,14 @@ async function vistaOrdem(id) {
             ? o.pecas
                 .map(
                   (p) => `<div class="linha">
-                    <span>${esc(p.descricao)}${p.referencia ? ` · <small>${esc(p.referencia)}</small>` : ""}<br>
-                      <small>${p.quantidade} × ${eur(p.preco_unitario)}</small></span>
+                    <span>${esc(p.descricao)}<br>
+                      <small>${p.quantidade} × ${eur(p.preco_unitario)}${p.fornecedor ? ` · ${esc(p.fornecedor)}` : ""}</small></span>
                     <span><strong>${eur(p.total)}</strong>
                       <button class="perigo" data-apagar-peca="${p.id}" title="Remover">✕</button></span>
                   </div>`
                 )
                 .join("")
-            : '<p class="ajuda">Ainda não foram aplicadas peças.</p>'
+            : '<p class="ajuda">Ainda não foram compradas peças para esta obra.</p>'
         }
       </div>
       <div class="acoes"><button id="add-peca">+ Adicionar peça</button></div>
@@ -371,7 +383,7 @@ async function vistaOrdem(id) {
 
     <h2 class="seccao">Conta</h2>
     <article class="cartao totais">
-      <div><span>Mão de obra (${horas(t.horas)} × ${eur(o.taxa_hora)})</span><strong>${eur(t.total_mao_obra)}</strong></div>
+      <div><span>Mão de obra (${horas(t.horas)})</span><strong>${eur(t.total_mao_obra)}</strong></div>
       <div><span>Peças</span><strong>${eur(t.total_pecas)}</strong></div>
       <div><span>Desconto</span><strong>−${eur(t.desconto)}</strong></div>
       <div><span>Subtotal</span><strong>${eur(t.subtotal)}</strong></div>
@@ -384,7 +396,6 @@ async function vistaOrdem(id) {
     </article>`;
 
   ligarCartoes();
-  iniciarRelogios();
 
   $("#imprimir").onclick = () => window.print();
 
@@ -438,88 +449,34 @@ async function vistaOrdem(id) {
       }
     );
 
-  const mecanicos = await api("/mecanicos");
-  const opcoesMec = [{ valor: "", texto: "— sem mecânico —" }].concat(
-    mecanicos.map((m) => ({ valor: m.id, texto: m.nome }))
-  );
+  $("#add-tempo").onclick = () => registarTempo(o.id);
 
-  $("#iniciar-cron").onclick = () =>
+  $("#add-peca").onclick = () =>
     modal(
-      "Iniciar cronómetro",
+      "Peça comprada para esta obra",
       [
-        { nome: "descricao", rotulo: "Tarefa", placeholder: "ex. substituir pastilhas" },
-        { nome: "mecanico_id", rotulo: "Mecânico", tipo: "select", opcoes: opcoesMec },
-      ],
-      async (d) => {
-        await api(`/ordens/${o.id}/tempos`, {
-          method: "POST",
-          body: { descricao: d.descricao, mecanico_id: num(d.mecanico_id) },
-        });
-        toast("Cronómetro a contar");
-      },
-      { confirmar: "Iniciar" }
-    );
-
-  $("#add-tempo").onclick = () =>
-    modal(
-      "Registar tempo",
-      [
-        { nome: "descricao", rotulo: "Tarefa" },
-        { nome: "minutos", rotulo: "Minutos", tipo: "number", passo: "5", valor: 60, obrigatorio: true },
-        { nome: "mecanico_id", rotulo: "Mecânico", tipo: "select", opcoes: opcoesMec },
-      ],
-      async (d) => {
-        await api(`/ordens/${o.id}/tempos`, {
-          method: "POST",
-          body: { descricao: d.descricao, minutos: num(d.minutos, 0), mecanico_id: num(d.mecanico_id) },
-        });
-        toast("Tempo registado");
-      }
-    );
-
-  $("#add-peca").onclick = async () => {
-    const pecas = await api("/pecas");
-    modal(
-      "Adicionar peça",
-      [
-        {
-          nome: "peca_id",
-          rotulo: "Do stock",
-          tipo: "select",
-          opcoes: [{ valor: "", texto: "— peça avulsa —" }].concat(
-            pecas.map((p) => ({
-              valor: p.id,
-              texto: `${p.referencia} · ${p.descricao} (${nf.format(p.preco_unitario)} €, stock ${p.stock})`,
-            }))
-          ),
-        },
-        { nome: "descricao", rotulo: "Descrição (se avulsa)" },
+        { nome: "descricao", rotulo: "Peça", placeholder: "ex. pastilhas de travão frente" },
+        { nome: "fornecedor", rotulo: "Fornecedor", placeholder: "ex. Norauto" },
         { nome: "quantidade", rotulo: "Quantidade", tipo: "number", passo: "0.01", valor: 1 },
-        { nome: "preco_unitario", rotulo: "Preço unitário (€)", tipo: "number", passo: "0.01", placeholder: "vazio = preço do catálogo" },
+        { nome: "preco_unitario", rotulo: "Preço unitário (€)", tipo: "number", passo: "0.01", valor: 0 },
       ],
       async (d) => {
+        if (!d.descricao.trim()) throw new Error("Indique a peça.");
+        if (num(d.quantidade, 1) <= 0) throw new Error("A quantidade tem de ser maior que zero.");
         await api(`/ordens/${o.id}/pecas`, {
           method: "POST",
           body: {
-            peca_id: num(d.peca_id),
             descricao: d.descricao,
+            fornecedor: d.fornecedor,
             quantidade: num(d.quantidade, 1),
-            preco_unitario: num(d.preco_unitario),
+            preco_unitario: num(d.preco_unitario, 0),
           },
         });
         toast("Peça adicionada");
       },
-      { nota: "As peças do catálogo abatem automaticamente ao stock." }
+      { nota: "As peças são compradas para cada carro; não há stock a gerir." }
     );
-  };
 
-  $$("[data-parar]").forEach((b) => {
-    b.onclick = async () => {
-      await api(`/ordens/${o.id}/tempos/${b.dataset.parar}/parar`, { method: "POST" });
-      toast("Cronómetro parado");
-      render();
-    };
-  });
   $$("[data-apagar-tempo]").forEach((b) => {
     b.onclick = async () => {
       if (!confirm("Apagar este registo de tempo?")) return;
@@ -536,23 +493,44 @@ async function vistaOrdem(id) {
   });
 }
 
-function iniciarRelogios() {
-  clearInterval(cronometros);
-  const marcas = $$("[data-desde]");
-  if (!marcas.length) return;
-  const tick = () => {
-    marcas.forEach((el) => {
-      const inicio = asData(el.dataset.desde);
-      const seg = Math.max(0, Math.floor((Date.now() - inicio.getTime()) / 1000));
-      const h = String(Math.floor(seg / 3600)).padStart(2, "0");
-      const m = String(Math.floor((seg % 3600) / 60)).padStart(2, "0");
-      const s = String(seg % 60).padStart(2, "0");
-      el.textContent = `● ${h}:${m}:${s}`;
-    });
-  };
-  tick();
-  cronometros = setInterval(tick, 1000);
+// ---------------------------------------------------------- registo de tempo
+async function registarTempo(ordemId, opcoes = {}) {
+  const mecanicos = await api("/mecanicos");
+  modal(
+    opcoes.titulo ?? "Registar tempo da reparação",
+    [
+      { nome: "descricao", rotulo: "Tarefa", placeholder: "ex. substituir pastilhas" },
+      { nome: "horas", rotulo: "Horas", tipo: "number", passo: "0.25", valor: 1 },
+      { nome: "minutos", rotulo: "Minutos adicionais", tipo: "number", passo: "5", valor: 0 },
+      {
+        nome: "mecanico_id",
+        rotulo: "Mecânico",
+        tipo: "select",
+        opcoes: [{ valor: "", texto: "— sem mecânico —" }].concat(
+          mecanicos.map((m) => ({ valor: m.id, texto: `${m.nome} (${nf.format(m.taxa_hora)} €/h)` }))
+        ),
+      },
+      { nome: "data", rotulo: "Data do trabalho", tipo: "date", valor: hojeISO() },
+    ],
+    async (d) => {
+      const total = num(d.horas, 0) * 60 + num(d.minutos, 0);
+      if (total <= 0) throw new Error("Indique o tempo da reparação.");
+      await api(`/ordens/${ordemId}/tempos`, {
+        method: "POST",
+        body: {
+          descricao: d.descricao,
+          minutos: total,
+          mecanico_id: num(d.mecanico_id),
+          data: d.data ? `${d.data}T12:00:00` : null,
+        },
+      });
+      toast(`Registadas ${duracao(total)} de mão de obra`);
+    },
+    { nota: "O preço segue o €/hora do mecânico escolhido; sem mecânico usa o da obra." }
+  );
 }
+
+const hojeISO = () => new Date().toISOString().slice(0, 10);
 
 // ------------------------------------------------------------------ ficha da viatura
 async function vistaVeiculo(id) {
@@ -572,6 +550,36 @@ async function vistaVeiculo(id) {
         <button class="primario" id="ficha-obra">+ Nova obra</button>
         <button class="sec" id="ficha-km">Atualizar km</button>
       </div>
+    </article>
+
+    <h2 class="seccao">Fotos e vídeos</h2>
+    <article class="cartao">
+      <div class="galeria">
+        ${
+          v.ficheiros.length
+            ? v.ficheiros
+                .map(
+                  (f) => `<figure class="media">
+                    ${
+                      f.tipo === "video"
+                        ? `<video src="${esc(f.url)}" controls preload="metadata"></video>`
+                        : `<a href="${esc(f.url)}" target="_blank" rel="noopener"><img src="${esc(f.url)}" alt="${esc(f.legenda || f.nome)}" loading="lazy" /></a>`
+                    }
+                    <figcaption>${esc(f.legenda || dataCurta(f.criado_em))}
+                      <button class="perigo" data-apagar-ficheiro="${f.id}" title="Apagar">✕</button>
+                    </figcaption>
+                  </figure>`
+                )
+                .join("")
+            : '<p class="ajuda">Sem fotos ou vídeos desta viatura.</p>'
+        }
+      </div>
+      <div class="acoes">
+        <button id="tirar-foto">📷 Tirar foto</button>
+        <button class="sec" id="anexar-media">Anexar foto/vídeo</button>
+      </div>
+      <input id="input-camara" class="hidden" type="file" accept="image/*" capture="environment" />
+      <input id="input-media" class="hidden" type="file" accept="image/*,video/*" multiple />
     </article>
 
     <div class="kpis" style="margin-top:12px">
@@ -597,6 +605,7 @@ async function vistaVeiculo(id) {
                       ? `<p><strong>Peças:</strong> ${o.pecas.map((p) => `${p.quantidade}× ${esc(p.descricao)}`).join(", ")}</p>`
                       : ""
                   }
+                  <div class="acoes"><button class="sec" data-tempo-obra="${o.id}">+ Registar tempo</button></div>
                 </article>`
               )
               .join("")
@@ -605,6 +614,39 @@ async function vistaVeiculo(id) {
     </div>`;
 
   ligarCartoes();
+
+  $$("[data-tempo-obra]").forEach((b) => {
+    b.onclick = (ev) => {
+      ev.stopPropagation();
+      registarTempo(Number(b.dataset.tempoObra), { titulo: `Tempo da obra #${b.dataset.tempoObra}` });
+    };
+  });
+
+  const enviarMedia = async (ficheiros) => {
+    for (const ficheiro of ficheiros) {
+      const dados = new FormData();
+      dados.append("ficheiro", ficheiro);
+      const resp = await fetch(`/api/veiculos/${v.id}/ficheiros`, { method: "POST", body: dados });
+      if (!resp.ok) {
+        const erro = await resp.json().catch(() => ({}));
+        return toast(typeof erro.detail === "string" ? erro.detail : "Falha no envio", "erro");
+      }
+    }
+    toast(ficheiros.length > 1 ? "Ficheiros guardados" : "Ficheiro guardado");
+    render();
+  };
+  $("#input-camara").onchange = (ev) => enviarMedia([...ev.target.files]);
+  $("#input-media").onchange = (ev) => enviarMedia([...ev.target.files]);
+  $("#tirar-foto").onclick = () => $("#input-camara").click();
+  $("#anexar-media").onclick = () => $("#input-media").click();
+  $$("[data-apagar-ficheiro]").forEach((b) => {
+    b.onclick = async () => {
+      if (!confirm("Apagar este ficheiro?")) return;
+      await api(`/ficheiros/${b.dataset.apagarFicheiro}`, { method: "DELETE" });
+      render();
+    };
+  });
+
   $("#ficha-km").onclick = () =>
     modal(
       "Atualizar quilómetros",
@@ -666,53 +708,155 @@ async function vistaVeiculos() {
   await carregar();
 }
 
-// ------------------------------------------------------------------ peças
-async function vistaPecas() {
+// ------------------------------------------------------------------ mecânicos
+async function vistaMecanicos() {
+  const mecanicos = await api("/mecanicos");
   conteudo.innerHTML = `
-    <div class="barra">
-      <input id="pesquisa-pecas" type="search" placeholder="Referência ou descrição…" />
-      <button id="nova-peca">+ Peça</button>
-    </div>
-    <div id="lista-pecas" class="lista"></div>`;
-  const lista = $("#lista-pecas");
-  const carregar = async () => {
-    const q = $("#pesquisa-pecas").value;
-    const pecas = await api(`/pecas?${new URLSearchParams(q ? { q } : {})}`);
-    lista.innerHTML = pecas.length
-      ? pecas
-          .map(
-            (p) => `<article class="cartao">
-              <h3><span>${esc(p.descricao)}</span><span>${eur(p.preco_unitario)}</span></h3>
-              <p>Ref. ${esc(p.referencia)} · stock <strong style="color:${p.stock <= 0 ? "var(--perigo)" : "inherit"}">${p.stock}</strong></p>
-            </article>`
-          )
-          .join("")
-      : vazio("📦", "Catálogo vazio.");
-  };
-  $("#pesquisa-pecas").oninput = carregar;
-  $("#nova-peca").onclick = () =>
+    <div class="barra"><button id="novo-mecanico">+ Mecânico</button></div>
+    <div class="lista">
+      ${
+        mecanicos.length
+          ? mecanicos
+              .map(
+                (m) => `<article class="cartao item" data-mecanico="${m.id}">
+                  <h3><span>${esc(m.nome)}</span><span>${eur(m.taxa_hora)}/h</span></h3>
+                  <p>${esc(m.especialidade || "mecânico")}${m.telefone ? ` · ${esc(m.telefone)}` : ""}</p>
+                  <p class="ajuda">Ver perfil, definições e resumo mensal →</p>
+                </article>`
+              )
+              .join("")
+          : vazio("👷", "Ainda não há mecânicos registados.")
+      }
+    </div>`;
+  ligarCartoes();
+  $("#novo-mecanico").onclick = () =>
     modal(
-      "Nova peça",
+      "Novo mecânico",
       [
-        { nome: "referencia", rotulo: "Referência", obrigatorio: true },
-        { nome: "descricao", rotulo: "Descrição", obrigatorio: true },
-        { nome: "preco_unitario", rotulo: "Preço unitário (€)", tipo: "number", passo: "0.01" },
-        { nome: "stock", rotulo: "Stock", tipo: "number", passo: "0.01", valor: 0 },
+        { nome: "nome", rotulo: "Nome", obrigatorio: true },
+        { nome: "telefone", rotulo: "Telefone", tipo: "tel" },
+        { nome: "especialidade", rotulo: "Especialidade" },
+        { nome: "taxa_hora", rotulo: "Preço por hora (€)", tipo: "number", passo: "0.5", valor: 35 },
       ],
       async (d) => {
-        await api("/pecas", {
+        await api("/mecanicos", {
           method: "POST",
           body: {
-            referencia: d.referencia,
-            descricao: d.descricao,
-            preco_unitario: num(d.preco_unitario, 0),
-            stock: num(d.stock, 0),
+            nome: d.nome,
+            telefone: txt(d.telefone),
+            especialidade: txt(d.especialidade),
+            taxa_hora: num(d.taxa_hora, 35),
           },
         });
-        toast("Peça criada");
+        toast("Mecânico criado");
       }
     );
-  await carregar();
+}
+
+async function vistaMecanico(id) {
+  const m = await api(`/mecanicos/${id}`);
+  elTitulo.textContent = m.nome;
+  elSubtitulo.textContent = m.especialidade || "Perfil do mecânico";
+
+  conteudo.innerHTML = `
+    <article class="cartao perfil">
+      <div class="avatar">${esc(m.nome.trim().charAt(0).toUpperCase())}</div>
+      <div>
+        <h3><span>${esc(m.nome)}</span>${m.ativo ? "" : '<span class="etiqueta">inativo</span>'}</h3>
+        <p>${esc(m.especialidade || "Mecânico")}${
+          m.telefone ? ` · <a href="tel:${esc(m.telefone)}">${esc(m.telefone)}</a>` : ""
+        }</p>
+        <p><strong>${eur(m.taxa_hora)}</strong> por hora de mão de obra</p>
+      </div>
+    </article>
+
+    <div class="kpis" style="margin-top:12px">
+      <div class="kpi"><small>Horas registadas</small><strong>${horas(m.totais.horas)}</strong></div>
+      <div class="kpi"><small>Obras</small><strong>${m.totais.obras}</strong></div>
+      <div class="kpi destaque"><small>Mão de obra gerada</small><strong>${eur(m.totais.valor)}</strong></div>
+    </div>
+
+    <h2 class="seccao">Definições</h2>
+    <article class="cartao">
+      <div class="linhas">
+        <div class="linha"><span>Preço por hora</span><strong>${eur(m.taxa_hora)}</strong></div>
+        <div class="linha"><span>Telefone</span><span>${esc(m.telefone || "—")}</span></div>
+        <div class="linha"><span>Especialidade</span><span>${esc(m.especialidade || "—")}</span></div>
+        <div class="linha"><span>Estado</span><span>${m.ativo ? "ativo" : "inativo"}</span></div>
+      </div>
+      <div class="acoes"><button id="editar-mecanico">Editar definições</button></div>
+    </article>
+
+    <h2 class="seccao">Resumo mensal</h2>
+    <article class="cartao">
+      <div class="linhas">
+        ${
+          m.resumo_mensal.length
+            ? m.resumo_mensal
+                .map(
+                  (r) => `<div class="linha">
+                    <span>${esc(nomeMes(r.mes))}<br><small>${r.obras} obra(s)</small></span>
+                    <span>${horas(r.horas)}<br><strong>${eur(r.valor)}</strong></span>
+                  </div>`
+                )
+                .join("")
+            : '<p class="ajuda">Sem trabalho registado nos últimos meses.</p>'
+        }
+      </div>
+    </article>
+
+    <h2 class="seccao">Trabalhos recentes</h2>
+    <div class="lista">
+      ${
+        m.trabalhos.length
+          ? m.trabalhos
+              .map(
+                (t) => `<article class="cartao item" data-obra="${t.ordem_id}">
+                  <h3><span>${esc(t.matricula || `obra #${t.ordem_id}`)}</span><span>${eur(t.valor)}</span></h3>
+                  <p>${dataCurta(t.data)} · ${duracao(t.minutos)}</p>
+                  <p>${esc(t.descricao || "trabalho")}</p>
+                </article>`
+              )
+              .join("")
+          : vazio("🗓️", "Ainda sem trabalhos registados.")
+      }
+    </div>`;
+
+  ligarCartoes();
+  $("#editar-mecanico").onclick = () =>
+    modal(
+      "Definições do mecânico",
+      [
+        { nome: "nome", rotulo: "Nome", valor: m.nome, obrigatorio: true },
+        { nome: "telefone", rotulo: "Telefone", tipo: "tel", valor: m.telefone ?? "" },
+        { nome: "especialidade", rotulo: "Especialidade", valor: m.especialidade ?? "" },
+        { nome: "taxa_hora", rotulo: "Preço por hora (€)", tipo: "number", passo: "0.5", valor: m.taxa_hora },
+        {
+          nome: "ativo",
+          rotulo: "Estado",
+          tipo: "select",
+          valor: m.ativo,
+          opcoes: [
+            { valor: 1, texto: "Ativo" },
+            { valor: 0, texto: "Inativo" },
+          ],
+        },
+      ],
+      async (d) => {
+        await api(`/mecanicos/${m.id}`, {
+          method: "PATCH",
+          body: {
+            nome: d.nome,
+            telefone: txt(d.telefone),
+            especialidade: txt(d.especialidade),
+            taxa_hora: num(d.taxa_hora),
+            ativo: num(d.ativo, 1),
+          },
+        });
+        toast("Definições guardadas");
+      },
+      { nota: "O preço/hora passa a ser usado no cálculo da mão de obra deste mecânico." }
+    );
 }
 
 // ------------------------------------------------------------------ clientes
@@ -764,9 +908,11 @@ async function vistaClientes() {
 // ------------------------------------------------------------------ router
 function lerHash() {
   const [, tipo, id] = (location.hash || "").split("/");
-  if (tipo === "obra") return { vista: "ordens", ordemId: Number(id), veiculoId: null };
-  if (tipo === "veiculo") return { vista: "veiculos", ordemId: null, veiculoId: Number(id) };
-  return { vista: TITULOS[tipo] ? tipo : "inicio", ordemId: null, veiculoId: null };
+  const base = { vista: "inicio", ordemId: null, veiculoId: null, mecanicoId: null };
+  if (tipo === "obra") return { ...base, vista: "ordens", ordemId: Number(id) };
+  if (tipo === "veiculo") return { ...base, vista: "veiculos", veiculoId: Number(id) };
+  if (tipo === "mecanico") return { ...base, vista: "mecanicos", mecanicoId: Number(id) };
+  return { ...base, vista: TITULOS[tipo] ? tipo : "inicio" };
 }
 
 function escreverHash() {
@@ -774,12 +920,15 @@ function escreverHash() {
     ? `#/obra/${estado.ordemId}`
     : estado.veiculoId
     ? `#/veiculo/${estado.veiculoId}`
+    : estado.mecanicoId
+    ? `#/mecanico/${estado.mecanicoId}`
     : `#/${estado.vista}`;
   if (location.hash !== novo) history.replaceState(null, "", novo);
 }
 
 function irPara(alteracoes) {
-  Object.assign(estado, { ordemId: null, veiculoId: null }, alteracoes);
+  Object.assign(estado, { ordemId: null, veiculoId: null, mecanicoId: null }, alteracoes);
+  if (alteracoes.mecanicoId) estado.vista = "mecanicos";
   render();
 }
 
@@ -787,14 +936,25 @@ function ligarAcoes(raiz = document) {
   $$('[data-acao="entrada"]', raiz).forEach((b) => {
     b.onclick = () => irPara({ vista: "entrada" });
   });
+  $$("[data-vista]", raiz).forEach((b) => {
+    b.onclick = () => irPara({ vista: b.dataset.vista });
+  });
 }
 
 async function render() {
-  clearInterval(cronometros);
   escreverHash();
-  const ativa = estado.ordemId ? "ordens" : estado.veiculoId ? "veiculos" : estado.vista;
+  const ativa = estado.ordemId
+    ? "ordens"
+    : estado.veiculoId
+    ? "veiculos"
+    : estado.mecanicoId
+    ? "mecanicos"
+    : estado.vista;
   $$("[data-vista]").forEach((b) => b.classList.toggle("ativo", b.dataset.vista === ativa));
-  btnVoltar.classList.toggle("hidden", !estado.ordemId && !estado.veiculoId);
+  btnVoltar.classList.toggle(
+    "hidden",
+    !estado.ordemId && !estado.veiculoId && !estado.mecanicoId
+  );
   const [tit, sub] = TITULOS[estado.vista] ?? TITULOS.inicio;
   elTitulo.textContent = tit;
   elSubtitulo.textContent = sub;
@@ -802,11 +962,12 @@ async function render() {
   try {
     if (estado.ordemId) return await vistaOrdem(estado.ordemId);
     if (estado.veiculoId) return await vistaVeiculo(estado.veiculoId);
+    if (estado.mecanicoId) return await vistaMecanico(estado.mecanicoId);
     if (estado.vista === "entrada") return await vistaEntrada();
     if (estado.vista === "ordens") return await vistaOrdens();
     if (estado.vista === "veiculos") return await vistaVeiculos();
-    if (estado.vista === "pecas") return await vistaPecas();
     if (estado.vista === "clientes") return await vistaClientes();
+    if (estado.vista === "mecanicos") return await vistaMecanicos();
     return await vistaInicio();
   } catch (e) {
     conteudo.innerHTML = vazio("⚠️", e.message);
@@ -815,11 +976,9 @@ async function render() {
   }
 }
 
-$$("[data-vista]").forEach((b) => {
-  b.onclick = () => irPara({ vista: b.dataset.vista });
-});
 ligarAcoes();
-btnVoltar.onclick = () => irPara({ vista: estado.ordemId ? "ordens" : "veiculos" });
+btnVoltar.onclick = () =>
+  irPara({ vista: estado.ordemId ? "ordens" : estado.mecanicoId ? "mecanicos" : "veiculos" });
 $("#btn-atualizar").onclick = render;
 window.addEventListener("hashchange", () => {
   Object.assign(estado, lerHash());

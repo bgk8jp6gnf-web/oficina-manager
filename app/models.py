@@ -49,6 +49,9 @@ class Veiculo(Base):
     ordens: Mapped[list["OrdemServico"]] = relationship(
         back_populates="veiculo", order_by="OrdemServico.id"
     )
+    ficheiros: Mapped[list["Ficheiro"]] = relationship(
+        back_populates="veiculo", cascade="all, delete-orphan", order_by="Ficheiro.id.desc()"
+    )
 
 
 class Mecanico(Base):
@@ -56,18 +59,10 @@ class Mecanico(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     nome: Mapped[str] = mapped_column(String(120))
-    custo_hora: Mapped[float] = mapped_column(Float, default=35.0)
+    telefone: Mapped[str | None] = mapped_column(String(40), default=None)
+    especialidade: Mapped[str | None] = mapped_column(String(80), default=None)
+    taxa_hora: Mapped[float] = mapped_column(Float, default=35.0)
     ativo: Mapped[int] = mapped_column(Integer, default=1)
-
-
-class Peca(Base):
-    __tablename__ = "pecas"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    referencia: Mapped[str] = mapped_column(String(60), unique=True, index=True)
-    descricao: Mapped[str] = mapped_column(String(200))
-    preco_unitario: Mapped[float] = mapped_column(Float, default=0.0)
-    stock: Mapped[float] = mapped_column(Float, default=0.0)
 
 
 class OrdemServico(Base):
@@ -101,31 +96,50 @@ class RegistoTempo(Base):
     ordem_id: Mapped[int] = mapped_column(ForeignKey("ordens_servico.id"))
     mecanico_id: Mapped[int | None] = mapped_column(ForeignKey("mecanicos.id"), default=None)
     descricao: Mapped[str] = mapped_column(String(200), default="")
-    inicio: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-    fim: Mapped[datetime | None] = mapped_column(DateTime, default=None)
-    minutos: Mapped[float | None] = mapped_column(Float, default=None)
+    data: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    minutos: Mapped[float] = mapped_column(Float, default=0.0)
+    taxa_hora: Mapped[float | None] = mapped_column(Float, default=None)
 
     ordem: Mapped["OrdemServico"] = relationship(back_populates="tempos")
     mecanico: Mapped["Mecanico | None"] = relationship()
 
-    @property
-    def minutos_efetivos(self) -> float:
-        if self.minutos is not None:
-            return self.minutos
-        if self.fim is None:
-            return 0.0
-        return (self.fim - self.inicio).total_seconds() / 60.0
+    def taxa_aplicada(self, taxa_ordem: float) -> float:
+        """Preço/hora congelado no registo; se faltar, o do mecânico ou o da obra."""
+        if self.taxa_hora is not None:
+            return self.taxa_hora
+        return self.mecanico.taxa_hora if self.mecanico else taxa_ordem
+
+    def valor(self, taxa_ordem: float) -> float:
+        return self.minutos / 60.0 * self.taxa_aplicada(taxa_ordem)
+
+
+class Ficheiro(Base):
+    """Foto ou vídeo da viatura, opcionalmente ligado a uma obra."""
+
+    __tablename__ = "ficheiros"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    veiculo_id: Mapped[int] = mapped_column(ForeignKey("veiculos.id"))
+    ordem_id: Mapped[int | None] = mapped_column(ForeignKey("ordens_servico.id"), default=None)
+    nome: Mapped[str] = mapped_column(String(200))
+    tipo: Mapped[str] = mapped_column(String(10), default="foto")
+    caminho: Mapped[str] = mapped_column(String(300))
+    legenda: Mapped[str] = mapped_column(String(200), default="")
+    criado_em: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    veiculo: Mapped["Veiculo"] = relationship(back_populates="ficheiros")
 
 
 class PecaUsada(Base):
+    """Peça comprada para esta obra; não há catálogo nem stock."""
+
     __tablename__ = "pecas_usadas"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     ordem_id: Mapped[int] = mapped_column(ForeignKey("ordens_servico.id"))
-    peca_id: Mapped[int | None] = mapped_column(ForeignKey("pecas.id"), default=None)
     descricao: Mapped[str] = mapped_column(String(200), default="")
+    fornecedor: Mapped[str] = mapped_column(String(120), default="")
     quantidade: Mapped[float] = mapped_column(Float, default=1.0)
     preco_unitario: Mapped[float] = mapped_column(Float, default=0.0)
 
     ordem: Mapped["OrdemServico"] = relationship(back_populates="pecas")
-    peca: Mapped["Peca | None"] = relationship()
