@@ -290,6 +290,43 @@ def atualizar_veiculo(
     return _veiculo_out(veiculo)
 
 
+def _apagar_ficheiro_guardado(registo: models.Ficheiro) -> None:
+    if registo.caminho.startswith(storage.PREFIXO):
+        try:
+            storage.apagar(registo.caminho)
+        except Exception:
+            logger.exception("Não foi possível apagar %s do Supabase Storage", registo.caminho)
+    else:
+        (MEDIA_DIR / registo.caminho).unlink(missing_ok=True)
+
+
+@app.delete("/api/veiculos/{veiculo_id}", status_code=204)
+def apagar_veiculo(
+    veiculo_id: int,
+    confirmar: bool = Query(default=False, description="Obrigatório se tiver obras"),
+    db: Session = Depends(get_db),
+):
+    """Elimina a viatura e todo o seu histórico (obras, tempos, peças e ficheiros)."""
+    veiculo = db.get(models.Veiculo, veiculo_id)
+    if veiculo is None:
+        raise HTTPException(404, "Veículo não encontrado")
+    if veiculo.ordens and not confirmar:
+        raise HTTPException(
+            409,
+            f"A viatura tem {len(veiculo.ordens)} obra(s) no histórico; confirme para apagar tudo.",
+        )
+
+    for ficheiro in list(veiculo.ficheiros):
+        _apagar_ficheiro_guardado(ficheiro)
+        db.delete(ficheiro)
+    db.flush()
+    for ordem in list(veiculo.ordens):
+        db.delete(ordem)
+    db.flush()
+    db.delete(veiculo)
+    db.commit()
+
+
 # ---------------------------------------------------------------- fotos e vídeos
 @app.get("/api/veiculos/{veiculo_id}/ficheiros")
 def listar_ficheiros(veiculo_id: int, db: Session = Depends(get_db)):
@@ -349,10 +386,7 @@ def apagar_ficheiro(ficheiro_id: int, db: Session = Depends(get_db)):
     registo = db.get(models.Ficheiro, ficheiro_id)
     if registo is None:
         raise HTTPException(404, "Ficheiro não encontrado")
-    if registo.caminho.startswith(storage.PREFIXO):
-        storage.apagar(registo.caminho)
-    else:
-        (MEDIA_DIR / registo.caminho).unlink(missing_ok=True)
+    _apagar_ficheiro_guardado(registo)
     db.delete(registo)
     db.commit()
 
@@ -455,6 +489,24 @@ def atualizar_mecanico(
     db.commit()
     db.refresh(mecanico)
     return _mecanico_out(mecanico)
+
+
+@app.delete("/api/mecanicos/{mecanico_id}", status_code=204)
+def apagar_mecanico(mecanico_id: int, db: Session = Depends(get_db)):
+    """Elimina o mecânico; as obras mantêm o tempo registado e o preço/hora usado."""
+    mecanico = db.get(models.Mecanico, mecanico_id)
+    if mecanico is None:
+        raise HTTPException(404, "Mecânico não encontrado")
+
+    registos = db.scalars(
+        select(models.RegistoTempo).where(models.RegistoTempo.mecanico_id == mecanico_id)
+    )
+    for registo in registos:
+        if registo.taxa_hora is None:
+            registo.taxa_hora = registo.taxa_aplicada(registo.ordem.taxa_hora)
+        registo.mecanico_id = None
+    db.delete(mecanico)
+    db.commit()
 
 
 # ---------------------------------------------------------------- ordens

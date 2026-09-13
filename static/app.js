@@ -549,6 +549,7 @@ async function vistaVeiculo(id) {
       <div class="acoes">
         <button class="primario" id="ficha-obra">+ Nova obra</button>
         <button class="sec" id="ficha-km">Atualizar km</button>
+        <button class="perigo" id="apagar-veiculo">Eliminar viatura</button>
       </div>
     </article>
 
@@ -646,6 +647,20 @@ async function vistaVeiculo(id) {
       render();
     };
   });
+
+  $("#apagar-veiculo").onclick = async () => {
+    const aviso = r.visitas
+      ? `Eliminar ${v.matricula}? Apaga também ${r.visitas} obra(s), fotos e vídeos. Não há forma de recuperar.`
+      : `Eliminar ${v.matricula}?`;
+    if (!confirm(aviso)) return;
+    try {
+      await api(`/veiculos/${v.id}?confirmar=true`, { method: "DELETE" });
+      toast(`Viatura ${v.matricula} eliminada`);
+      irPara({ vista: "veiculos" });
+    } catch (e) {
+      toast(e.message, "erro");
+    }
+  };
 
   $("#ficha-km").onclick = () =>
     modal(
@@ -784,7 +799,10 @@ async function vistaMecanico(id) {
         <div class="linha"><span>Especialidade</span><span>${esc(m.especialidade || "—")}</span></div>
         <div class="linha"><span>Estado</span><span>${m.ativo ? "ativo" : "inativo"}</span></div>
       </div>
-      <div class="acoes"><button id="editar-mecanico">Editar definições</button></div>
+      <div class="acoes">
+        <button id="editar-mecanico">Editar definições</button>
+        <button class="perigo" id="apagar-mecanico">Eliminar mecânico</button>
+      </div>
     </article>
 
     <h2 class="seccao">Resumo mensal</h2>
@@ -823,6 +841,21 @@ async function vistaMecanico(id) {
     </div>`;
 
   ligarCartoes();
+  $("#apagar-mecanico").onclick = async () => {
+    if (
+      !confirm(
+        `Eliminar ${m.nome}? As obras mantêm o tempo e o valor já registados, mas deixam de mostrar o nome dele.`
+      )
+    )
+      return;
+    try {
+      await api(`/mecanicos/${m.id}`, { method: "DELETE" });
+      toast(`${m.nome} eliminado`);
+      irPara({ vista: "mecanicos" });
+    } catch (e) {
+      toast(e.message, "erro");
+    }
+  };
   $("#editar-mecanico").onclick = () =>
     modal(
       "Definições do mecânico",
