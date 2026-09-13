@@ -1,0 +1,15 @@
+name: acordar-app
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pedir /healthz para o Render não adormecer
+        run: curl -fsS --max-time 120 "${APP_URL%/}/healthz"
+        env:
+          APP_URL: ${{ vars.APP_URL || 'https://oficina-manager-iuzd.onrender.com' }}
